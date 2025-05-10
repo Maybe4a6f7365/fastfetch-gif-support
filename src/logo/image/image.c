@@ -5,9 +5,20 @@
 #include "util/stringUtils.h"
 #include "util/base64.h"
 #include "detection/terminalsize/terminalsize.h"
+#include "../gif.h"
 
 #include <limits.h>
 #include <math.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/sendfile.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <stdlib.h>
+#include <fcntl.h>
 
 #ifdef __APPLE__
     #include <sys/syslimits.h>
@@ -18,6 +29,9 @@
 #elif __sun
     #include <sys/termios.h>
 #endif
+
+// Füge Prototypen für ffPrintCharTimes und weitere Funktionen hinzu, falls nötig
+void ffPrintCharTimes(char c, unsigned int times);
 
 static bool printImageIterm(bool printError)
 {
@@ -260,7 +274,88 @@ static bool printImageKittyIcat(bool printError)
     return true;
 }
 
-static bool printImageKittyDirect(bool printError)
+// Forward declaration
+static bool printImageKittyDirectSingle(bool printError);
+
+bool printImageKittyDirect(bool printError)
+{
+    const FFOptionsLogo* options = &instance.config.logo;
+
+    if (!ffPathExists(options->source.chars, FF_PATHTYPE_FILE))
+    {
+        if (printError) fputs("Logo (kitty-direct): Failed to load image file\n", stderr);
+        return false;
+    }
+
+    if (ffStrEndsWithIgnCase(options->source.chars, ".gif")) {
+        // Process GIF animation
+        if (options->animate) {
+            fflush(stdout);
+            
+            // Calculate logo width
+            uint32_t width = options->width > 0 ? options->width : 25;
+            // Estimated height of the logo (or from options if specified)
+            uint32_t height = options->height > 0 ? options->height : 20;
+            
+            // Reserve space for the logo
+            if (options->position == FF_LOGO_POSITION_LEFT) {
+                // IMPORTANT: Set the logo width BEFORE displaying the logo
+                // This tells Fastfetch to display text to the right of the logo
+                instance.state.logoWidth = width + options->paddingLeft + options->paddingRight + 4; // Additional buffer
+                instance.state.logoHeight = height + options->paddingTop;
+                
+                // Set cursor to the correct position for the logo
+                printf("\e[%u;%uH", 
+                    (unsigned) options->paddingTop + 1,
+                    (unsigned) options->paddingLeft + 1);
+            }
+            else if (options->position == FF_LOGO_POSITION_TOP) {
+                // With TOP position there is no overlap with text
+                ffPrintCharTimes('\n', options->paddingTop);
+                ffPrintCharTimes(' ', options->paddingLeft);
+                instance.state.logoWidth = instance.state.logoHeight = 0;
+            }
+            else if (options->position == FF_LOGO_POSITION_RIGHT) {
+                // Right positioning is more difficult - currently not optimally supported
+                if (printError)
+                    fputs("Logo (kitty-direct): Animation with position right is not fully supported\n", stderr);
+                return false;
+            }
+            
+            // Call kitty icat with correct parameters
+            char cmd[1024];
+            if (options->width > 0) {
+                // With '--place' we can specify the exact position and size
+                snprintf(cmd, sizeof(cmd), 
+                         "kitty +kitten icat --align=left --scale-up --place=%ux%u@%ux%u %s", 
+                         width, height,
+                         options->paddingLeft + 1, options->paddingTop + 1,
+                         options->source.chars);
+            } else {
+                // Without width specification just display the image
+                snprintf(cmd, sizeof(cmd), "kitty +kitten icat --align=left %s", 
+                         options->source.chars);
+            }
+            
+            system(cmd);
+            
+            // Return to the beginning of the terminal so Fastfetch can output the rest of the data
+            if (options->position == FF_LOGO_POSITION_LEFT) {
+                fputs("\e[H", stdout); // Cursor back to start
+            }
+            
+            return true;
+        }
+        else {
+            // For non-animated GIFs, maintain normal behavior 
+            return printImageKittyDirectSingle(printError);
+        }
+    }
+
+    return printImageKittyDirectSingle(printError);
+}
+
+static bool printImageKittyDirectSingle(bool printError)
 {
     const FFOptionsLogo* options = &instance.config.logo;
 
@@ -311,9 +406,9 @@ static bool printImageKittyDirect(bool printError)
         if (inTmux)
             ffStrbufAppendS(&buf, "\ePtmux;\e");
         if (options->width)
-            ffStrbufAppendF(&buf, "\e_Ga=T,f=100,t=f,c=%u;%s", (unsigned) options->width, base64.chars);
+            ffStrbufAppendF(&buf, "\e_Ga=d,f=100,t=f,c=%u;%s", (unsigned) options->width, base64.chars);
         else
-            ffStrbufAppendF(&buf, "\e_Ga=T,f=100,t=f;%s", base64.chars);
+            ffStrbufAppendF(&buf, "\e_Ga=d,f=100,t=f;%s", base64.chars);
         if (inTmux)
             ffStrbufAppendC(&buf, '\e');
         ffStrbufAppendS(&buf, "\e\\");
@@ -357,7 +452,7 @@ static bool printImageKittyDirect(bool printError)
         if (inTmux)
             ffStrbufAppendS(&buf, "\ePtmux;\e");
 
-        ffStrbufAppendF(&buf, "\e_Ga=T,f=100,t=f,c=%u,r=%u;%s\e\\",
+        ffStrbufAppendF(&buf, "\e_Ga=d,f=100,t=f,c=%u,r=%u;%s\e\\",
             (unsigned) options->width,
             (unsigned) options->height,
             base64.chars
@@ -709,7 +804,7 @@ static bool printImageChafa(FFLogoRequestData* requestData, const ImageData* ima
 FFLogoImageResult ffLogoPrintImageImpl(FFLogoRequestData* requestData, const FFIMData* imData)
 {
     FF_LIBRARY_LOAD_SYMBOL(imData->library, MagickCoreGenesis, FF_LOGO_IMAGE_RESULT_INIT_ERROR);
-    FF_LIBRARY_LOAD_SYMBOL(imData->library, MagickCoreTerminus, FF_LOGO_IMAGE_RESULT_INIT_ERROR);
+    FF_LIBRARY_LOAD_SYMBOL(imData->library, MagickCoreTerminus, FF_LOGO_IMAGE_RESULT_INIT_ERROR)
     FF_LIBRARY_LOAD_SYMBOL(imData->library, AcquireExceptionInfo, FF_LOGO_IMAGE_RESULT_INIT_ERROR)
     FF_LIBRARY_LOAD_SYMBOL(imData->library, DestroyExceptionInfo, FF_LOGO_IMAGE_RESULT_INIT_ERROR)
     FF_LIBRARY_LOAD_SYMBOL(imData->library, AcquireImageInfo, FF_LOGO_IMAGE_RESULT_INIT_ERROR)

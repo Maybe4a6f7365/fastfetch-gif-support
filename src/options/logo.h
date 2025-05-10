@@ -51,6 +51,8 @@ typedef struct FFOptionsLogo
     uint32_t chafaCanvasMode;
     uint32_t chafaColorSpace;
     uint32_t chafaDitherMode;
+
+    bool animate;  // Enable GIF animation
 } FFOptionsLogo;
 
 void ffOptionsInitLogo(FFOptionsLogo* options);

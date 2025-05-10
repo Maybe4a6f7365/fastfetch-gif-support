@@ -24,6 +24,8 @@ void ffOptionsInitLogo(FFOptionsLogo* options)
     options->chafaCanvasMode = UINT32_MAX;
     options->chafaColorSpace = UINT32_MAX;
     options->chafaDitherMode = UINT32_MAX;
+    
+    options->animate = false; // Disable GIF animation by default
 }
 
 bool ffOptionsParseLogoCommandLine(FFOptionsLogo* options, const char* key, const char* value)
@@ -71,7 +73,7 @@ logoType:
                 {},
             });
         }
-        else if(ffStrStartsWithIgnCase(subKey, "color-") && subKey[6] != '\0' && subKey[7] == '\0') // matches "--logo-color-*"
+        else if(ffStrStartsWithIgnCase(subKey, "color-") && subKey[6] != '\0' && subKey[7] == '\0') // matches "--logo-color-[1-9]
         {
             //Map the number to an array index, so that '1' -> 0, '2' -> 1, etc.
             int index = (int)subKey[6] - '0' - 1;
@@ -125,6 +127,8 @@ logoType:
                 {},
             });
         }
+        else if(ffStrEqualsIgnCase(subKey, "animate"))
+            options->animate = ffOptionParseBoolean(value);
         else
             return false;
     }
@@ -233,6 +237,28 @@ logoType:
         else
             return false;
     }
+    else if(ffStrEqualsIgnCase(key, "--logo-recache"))
+        options->recache = ffOptionParseBoolean(value);
+    else if(ffStrEqualsIgnCase(key, "--logo-color") || ffStrEqualsIgnCase(key, "--logo-color1"))
+        ffOptionParseString(key, value, &options->colors[0]);
+    else if(ffStrEqualsIgnCase(key, "--logo-color2"))
+        ffOptionParseString(key, value, &options->colors[1]);
+    else if(ffStrEqualsIgnCase(key, "--logo-color3"))
+        ffOptionParseString(key, value, &options->colors[2]);
+    else if(ffStrEqualsIgnCase(key, "--logo-color4"))
+        ffOptionParseString(key, value, &options->colors[3]);
+    else if(ffStrEqualsIgnCase(key, "--logo-color5"))
+        ffOptionParseString(key, value, &options->colors[4]);
+    else if(ffStrEqualsIgnCase(key, "--logo-color6"))
+        ffOptionParseString(key, value, &options->colors[5]);
+    else if(ffStrEqualsIgnCase(key, "--logo-color7"))
+        ffOptionParseString(key, value, &options->colors[6]);
+    else if(ffStrEqualsIgnCase(key, "--logo-color8"))
+        ffOptionParseString(key, value, &options->colors[7]);
+    else if(ffStrEqualsIgnCase(key, "--logo-color9"))
+        ffOptionParseString(key, value, &options->colors[8]);
+    else if(ffStrEqualsIgnCase(key, "--logo-animate"))
+        options->animate = ffOptionParseBoolean(value);
     else
         return false;
 
@@ -372,6 +398,13 @@ const char* ffOptionsParseLogoJsonConfig(FFOptionsLogo* options, yyjson_val* roo
         else if (ffStrEqualsIgnCase(key, "recache"))
         {
             options->recache = yyjson_get_bool(val);
+            continue;
+        }
+        else if (ffStrEqualsIgnCase(key, "animate"))
+        {
+            if (!yyjson_is_bool(val))
+                return "Logo animate must be a boolean";
+            options->animate = yyjson_get_bool(val);
             continue;
         }
         else if(ffStrEqualsIgnCase(key, "separate"))
